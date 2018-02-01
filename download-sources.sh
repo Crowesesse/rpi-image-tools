@@ -14,7 +14,7 @@ function download_firmware() {
 
     if [ ! -e "$FIRMWARE_PATH" ]; then
         echo "Extracting firmware..."
-        tar -C "$SOURCE_DIR/firmware" -xzf "$FIRMWARE_PATH_COMPRESSED"
+        mkdir -p $FIRMWARE_PATH && tar -C $FIRMWARE_PATH --strip-components=1 -xzf "$FIRMWARE_PATH_COMPRESSED"
         [ -e "$FIRMWARE_PATH" ] || exit_error "Firmware extracted but not found"
         rm "$FIRMWARE_PATH_COMPRESSED"
     else

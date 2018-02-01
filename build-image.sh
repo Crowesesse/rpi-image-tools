@@ -1,5 +1,6 @@
 #!/bin/bash
 
+export LIBGUESTFS_BACKEND=direct
 set -euo pipefail
 
 BIN_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
@@ -94,6 +95,7 @@ function build_resized_image() {
 function make_boot_vfat() {
     echo "Formatting boot as vfat..."
     OLD_BOOT_FS_UUID=$(virt-filesystems -a "$OUT_IMAGE_TMP_PATH" -l --uuid | grep /dev/sda1 | awk '{ print $7 }')
+    virt-edit -a "$OUT_IMAGE_TMP_PATH" /etc/fstab -e "s/UUID=$OLD_BOOT_FS_UUID/\/dev\/sda1/" 2>&1 | sed -e 's/.*libguestfs: error: findfs_uuid.*//'
 
     guestfish -a "$OUT_IMAGE_TMP_PATH" run : mkfs vfat /dev/sda1 : part-set-mbr-id /dev/sda 1 0x0b
 
@@ -102,7 +104,7 @@ function make_boot_vfat() {
 
 function amend_fstab() {
     echo "Amending boot partition UUID in fstab..."
-    virt-edit -a "$OUT_IMAGE_TMP_PATH" /etc/fstab -e "s/$OLD_BOOT_FS_UUID/$BOOT_FS_UUID/" 2>&1 | sed -e 's/.*libguestfs: error: findfs_uuid.*//'
+    virt-edit -a "$OUT_IMAGE_TMP_PATH" /etc/fstab -e "s/\/dev\/sda1/UUID=$BOOT_FS_UUID/" 2>&1 | sed -e 's/.*libguestfs: error: findfs_uuid.*//'
 
     echo "Amending boot partition type in fstab..."
     virt-edit -a "$OUT_IMAGE_TMP_PATH" /etc/fstab -e 's/(\/boot\s*)ext4/\1vfat/' 2>&1 | sed -e 's/.*libguestfs: error: findfs_uuid.*//'
@@ -128,6 +130,12 @@ function install_firmware() {
     local modules_files=( $(ls "$FIRMWARE_PATH/modules") )
     modules_files=( "${modules_files[@]/#/$FIRMWARE_PATH\/modules\/}" )
     virt-copy-in -a "$OUT_IMAGE_TMP_PATH" "${modules_files[@]}" /lib/modules
+
+    echo "Installing /opt/vc..."
+    local vc_files=( "$FIRMWARE_PATH/opt/vc" )
+    virt-copy-in -a "$OUT_IMAGE_TMP_PATH" "${vc_files}" /opt
+    echo "Add links to vc libraries and binaries"
+    guestfish -a "$OUT_IMAGE_TMP_PATH" run : mount /dev/sda3 / : write /etc/ld.so.conf.d/rpi.conf "/opt/vc/lib" : write /etc/profile.d/rpi-vc.sh "PATH=\$PATH:/opt/vc/bin"
 }
 
 function configure_boot() {
@@ -139,7 +147,8 @@ function configure_boot() {
 disable_overscan=1
 hdmi_force_hotplug=1
 hdmi_group=1
-hdmi_mode=16'
+hdmi_mode=16
+dtparam=audio=on'
 }
 
 function make_bootable() {
@@ -171,10 +180,10 @@ function set_root_password() {
 function install_wifi_firmware() {
     echo "Installing WiFi firmware..."
     virt-customize -a "$OUT_IMAGE_TMP_PATH" \
-                   --upload "$BRCM_WIFI_FIRMWARE_DIR/$BRCM_WIFI_FIRMWARE_BIN:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_BIN" \
                    --upload "$BRCM_WIFI_FIRMWARE_DIR/$BRCM_WIFI_FIRMWARE_TXT:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_TXT" \
-                   --chmod "0644:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_BIN" \
                    --chmod "0644:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_TXT"
+#                   --upload "$BRCM_WIFI_FIRMWARE_DIR/$BRCM_WIFI_FIRMWARE_BIN:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_BIN" \
+ #                  --chmod "0644:/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_BIN" \
 
     # virt-customize doesn't do chowns (yet?)
     guestfish -i -a "$OUT_IMAGE_TMP_PATH" chown 0 0 "/lib/firmware/brcm/$BRCM_WIFI_FIRMWARE_BIN"
